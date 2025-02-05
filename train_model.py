@@ -19,7 +19,7 @@ EPISODES = 300  # Increased episodes for deeper learning
 EVAL_FREQUENCY = 20
 EVAL_EPISODES = 200  # More evaluation games for better accuracy
 BATCH_SIZE = 2048  # Larger batch size for more stable updates
-TARGET_UPDATE = 100  # Less frequent updates to avoid instability
+TARGET_UPDATE = 30  # Less frequent updates to avoid instability
 MEMORY_SIZE = 2000000  # Larger memory for better replay diversity
 LEARNING_RATE = 0.000025  # Further reduced learning rate for smoother training
 EPSILON_START = 1.0
@@ -65,17 +65,21 @@ class CheckersTrainer:
 
         best_model_path = os.path.join(checkpoint_dir, 'best_model.pth')
         console = Console()
+
         with Live(console=console, refresh_per_second=2):
             for episode in range(self.episodes):
                 state = self.env.reset()
                 done = False
                 current_agent, opponent_agent = (self.agent1, self.agent2) if random.random() < 0.5 else (
                 self.agent2, self.agent1)
-                opponent_agent.epsilon = max(EPSILON_END, opponent_agent.epsilon * EPSILON_DECAY)
                 player = 1 if current_agent == self.agent1 else -1
                 total_reward = 0
                 total_loss = 0
                 move_count = 0
+
+                # Ensure epsilon decays properly
+                current_agent.epsilon = max(EPSILON_END, current_agent.epsilon * EPSILON_DECAY)
+                opponent_agent.epsilon = max(EPSILON_END, opponent_agent.epsilon * EPSILON_DECAY)
 
                 while not done:
                     valid_moves = self.env.valid_moves(player)
@@ -97,9 +101,6 @@ class CheckersTrainer:
                         loss = current_agent.replay()
                         if loss is not None:
                             total_loss += loss
-                        if current_agent.epsilon > current_agent.epsilon_min:
-                            current_agent.epsilon = max(current_agent.epsilon_min,
-                                                        current_agent.epsilon * current_agent.epsilon_decay)
 
                     state = next_state
                     total_reward += reward
@@ -109,21 +110,27 @@ class CheckersTrainer:
                         current_agent, opponent_agent = opponent_agent, current_agent
                         player *= -1
 
-                if episode % TARGET_UPDATE == 0:
-                    self.agent1.update_target_network()
-                    self.agent2.update_target_network()
+                def soft_update(target, source, tau=0.005):  # Smooth updates
+                    for target_param, param in zip(target.parameters(), source.parameters()):
+                        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
+                soft_update(self.agent1.target_network, self.agent1.q_network)
+                soft_update(self.agent2.target_network, self.agent2.q_network)
 
                 self.rewards.append(total_reward)
                 self.losses.append(total_loss / max(1, move_count))
                 self.epsilons.append(current_agent.epsilon)
+
                 winner = self.env.game_winner(state)
                 wins[winner] += 1
 
-                # Only the better agent moves on
+                # Select the better agent to continue learning
                 if wins[1] > wins[-1]:
-                    self.agent2 = DQNAgent()
+                    self.agent2.q_network.load_state_dict(self.agent1.q_network.state_dict())
+                    self.agent2.target_network.load_state_dict(self.agent1.q_network.state_dict())
                 elif wins[-1] > wins[1]:
-                    self.agent1 = DQNAgent()
+                    self.agent1.q_network.load_state_dict(self.agent2.q_network.state_dict())
+                    self.agent1.target_network.load_state_dict(self.agent2.q_network.state_dict())
 
                 win_rate = (wins[1] / max(1, sum(wins.values()))) * 100
                 self.win_rates.append(win_rate)
@@ -136,19 +143,30 @@ class CheckersTrainer:
 
     def plot_training_results(self):
         """ Plot and save training results """
-        plt.figure(figsize=(12, 6))
-        plt.subplot(1, 2, 1)
+        plt.figure(figsize=(15, 5))
+
+        # Win Rate
+        plt.subplot(1, 3, 1)
         plt.plot(range(len(self.win_rates)), self.win_rates, label='Win Rate', color='blue')
         plt.xlabel('Episodes')
         plt.ylabel('Win Rate (%)')
         plt.title('Win Rate Progression')
         plt.legend()
 
-        plt.subplot(1, 2, 2)
+        # Rewards
+        plt.subplot(1, 3, 2)
         plt.plot(range(len(self.rewards)), self.rewards, label='Rewards per Episode', color='green', alpha=0.7)
         plt.xlabel('Episodes')
         plt.ylabel('Rewards')
         plt.title('Training Rewards')
+        plt.legend()
+
+        # Epsilon Decay
+        plt.subplot(1, 3, 3)
+        plt.plot(range(len(self.epsilons)), self.epsilons, label='Epsilon Decay', color='red', alpha=0.7)
+        plt.xlabel('Episodes')
+        plt.ylabel('Epsilon')
+        plt.title('Epsilon Decay Progression')
         plt.legend()
 
         plt.tight_layout()

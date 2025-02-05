@@ -9,69 +9,47 @@ import torch.nn.functional as F
 
 mp.set_start_method('spawn', force=True)  # Add this at the top of the file
 
+
+
 class ParallelDQN(nn.Module):
-    def __init__(self, state_shape=(6, 6), action_size=36, hidden_size=256, surprise_factor=0.1, punishment_factor=1.5):
+    def __init__(self, state_shape=(6, 6), action_size=36, hidden_size=64, dropout_rate=0.2):
         super(ParallelDQN, self).__init__()
 
-        self.surprise_factor = surprise_factor  # Adds randomness for bluffing
-        self.punishment_factor = punishment_factor  # Scales punishment effect
+        # Minimal Convolutional Feature Extractor
+        self.conv = nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, stride=1, padding=1)
 
-        # Convolutional layers to process the board state
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
+        # Flattened representation
+        self.fc1 = nn.Linear(16 * 6 * 6, hidden_size)
+        self.dropout = nn.Dropout(dropout_rate)
+        self.layer_norm = nn.LayerNorm(hidden_size)  # Prevents overfitting
 
-        self.fc1 = nn.Linear(64 * 6 * 6, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-
-        # Dueling Q-network heads
+        # Dueling DQN: Value and Advantage branches
         self.value_stream = nn.Linear(hidden_size, 1)
         self.advantage_stream = nn.Linear(hidden_size, action_size)
 
-    def forward(self, x, train_mode=True):
+    def forward(self, x):
         x = x.view(-1, 1, 6, 6)  # Reshape input into (batch, channels, height, width)
-
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv(x))  # Simple feature extraction
 
         x = x.view(x.size(0), -1)  # Flatten
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
+        x = self.layer_norm(x)  # Normalization to avoid overfitting
+        x = self.dropout(x)  # Prevents co-adaptation
 
         value = self.value_stream(x)
         advantage = self.advantage_stream(x)
 
-        # Compute Q-values
+        # Dueling Q-value formula
         q_values = value + (advantage - advantage.mean(dim=1, keepdim=True))
-
-        if train_mode:
-            # Introduce noise (bluff factor) randomly during training
-            noise = torch.randn_like(q_values) * self.surprise_factor
-            q_values += noise
-
         return q_values
 
-    def select_action(self, state, temperature=1.0, bluff_prob=0.1):
-        """ Selects an action using Boltzmann exploration (favoring high-reward moves)
-            and adds a bluffing component. """
-
+    def select_action(self, state, epsilon=0.1):
+        """ Uses ε-greedy action selection (simpler than Noisy Networks) """
+        if np.random.rand() < epsilon:
+            return np.random.randint(0, 36)  # Random move for exploration
         with torch.no_grad():
-            q_values = self.forward(state, train_mode=False)
-
-            # Boltzmann distribution: prioritizes higher Q-values
-            probs = F.softmax(q_values / temperature, dim=-1)
-            action = torch.multinomial(probs, 1).item()
-
-            # Bluffing mechanism: 10% chance to pick a random lower Q-value action
-            if np.random.rand() < bluff_prob:
-                action = torch.randint(0, len(q_values[0]), (1,)).item()
-
-        return action
-
-    def adjust_punishment(self, q_values, bad_moves_mask):
-        """ Increase punishment for bad moves by reducing their Q-values more significantly. """
-        punishment = bad_moves_mask * self.punishment_factor
-        return q_values - punishment
-
+            q_values = self.forward(state)
+            return torch.argmax(q_values).item()  # Greedy action
 
 
 class ParallelDQNB(nn.Module):
@@ -167,7 +145,7 @@ class DQNAgent:
         self.epsilon_decay = 0.9995  # More gradual decay (was 0.995)
         self.learning_rate = 0.0001
         self.batch_size = 128  # Increased batch size for H100
-        self.hidden_size = 512
+        self.hidden_size = 128
         # H100 specific optimizations
         if torch.cuda.is_available():
             torch.cuda.set_device(0)
