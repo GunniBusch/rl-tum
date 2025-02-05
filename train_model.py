@@ -114,8 +114,11 @@ class CheckersTrainer:
                         player *= -1
 
                 if episode % TARGET_UPDATE == 0:
-                    self.agent1.update_target_network()
-                    self.agent2.update_target_network()
+                    # Only the better agent moves on
+                    if wins[1] > wins[-1]:
+                        self.agent2.update_target_network()
+                    elif wins[-1] > wins[1]:
+                        self.agent1.update_target_network()
 
                 self.rewards.append(total_reward)
                 self.losses.append(total_loss / max(1, move_count))
@@ -123,11 +126,7 @@ class CheckersTrainer:
                 winner = self.env.game_winner(state)
                 wins[winner] += 1
 
-                # Only the better agent moves on
-                if wins[1] > wins[-1]:
-                    self.agent2 = DQNAgent()
-                elif wins[-1] > wins[1]:
-                    self.agent1 = DQNAgent()
+
 
                 win_rate = (wins[1] / max(1, sum(wins.values()))) * 100
                 self.win_rates.append(win_rate)
