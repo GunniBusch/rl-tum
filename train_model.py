@@ -153,6 +153,7 @@ class CheckersTrainer:
         plt.legend()
 
         plt.tight_layout()
+        plt.savefig('checkpoints/training_results.png')
         plt.show()
 
     def save_model(self, path):
