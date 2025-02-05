@@ -15,21 +15,20 @@ import argparse
 import math
 
 # Training parameters
-EPISODES = 300  # Increased episodes for deeper learning
-EVAL_FREQUENCY = 20
-EVAL_EPISODES = 200  # More evaluation games for better accuracy
-BATCH_SIZE = 2048  # Larger batch size for more stable updates
-TARGET_UPDATE = 100  # Less frequent updates to avoid instability
-MEMORY_SIZE = 2000000  # Larger memory for better replay diversity
-LEARNING_RATE = 0.000025  # Further reduced learning rate for smoother training
+EPISODES = 300
+EVAL_FREQUENCY = 10  # More frequent evaluations
+EVAL_EPISODES = 500  # More evaluation games for accuracy
+BATCH_SIZE = 2048
+TARGET_UPDATE = 50  # More frequent target updates for stability
+MEMORY_SIZE = 2000000
+LEARNING_RATE = 0.000025
 EPSILON_START = 1.0
-EPSILON_END = 0.0001  # Maintain more exploration for longer
-EPSILON_DECAY = 0.99995  # Even slower decay for sustained exploration
-GAMMA = 0.999  # Higher discount factor for better long-term planning
-TAU = 0.001  # More gradual target network updates
-GRADIENT_CLIP = 0.5  # Reduce large gradient spikes
-PRIORITY_EPSILON = 1e-6  # Prevent NaN in priority-based sampling
-
+EPSILON_END = 0.0001
+EPSILON_DECAY = 0.99995
+GAMMA = 0.999
+TAU = 0.005
+GRADIENT_CLIP = 0.5
+PRIORITY_EPSILON = 1e-6
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train Checkers AI')
@@ -75,7 +74,7 @@ class CheckersTrainer:
                 state = self.env.reset()
                 done = False
                 current_agent, opponent_agent = (self.agent1, self.agent2) if random.random() < 0.5 else (
-                self.agent2, self.agent1)
+                    self.agent2, self.agent1)
                 opponent_agent.epsilon = max(EPSILON_END, opponent_agent.epsilon * EPSILON_DECAY)
                 player = 1 if current_agent == self.agent1 else -1
                 total_reward = 0
@@ -94,7 +93,7 @@ class CheckersTrainer:
                     reward += 0.2 * (action[2] - action[0]) if player == 1 else 0.2 * (action[0] - action[2])
                     reward += 5.0 if abs(action[2] - action[0]) == 2 else 0.0
                     reward += 8.0 if (player == 1 and action[2] == self.env.board_size - 1) or (
-                                player == -1 and action[2] == 0) else 0.0
+                            player == -1 and action[2] == 0) else 0.0
 
                     current_agent.remember(state, action, reward, next_state, done)
 
@@ -102,9 +101,6 @@ class CheckersTrainer:
                         loss = current_agent.replay()
                         if loss is not None:
                             total_loss += loss
-                        if current_agent.epsilon > current_agent.epsilon_min:
-                            current_agent.epsilon = max(current_agent.epsilon_min,
-                                                        current_agent.epsilon * current_agent.epsilon_decay)
 
                     state = next_state
                     total_reward += reward
@@ -140,6 +136,7 @@ class CheckersTrainer:
     def evaluate(self):
         """ Evaluates the current agent's performance """
         total_wins = 0
+        total_losses = 0
         for _ in range(self.eval_games):
             state = self.env.reset()
             done = False
@@ -152,10 +149,14 @@ class CheckersTrainer:
                 action = agent.act(state, valid_moves)
                 state, _, _, done = self.env.step(action, player)
                 player *= -1
-            if self.env.game_winner(state) == 1:
+            winner = self.env.game_winner(state)
+            if winner == 1:
                 total_wins += 1
+            elif winner == -1:
+                total_losses += 1
         win_rate = (total_wins / self.eval_games) * 100
-        print(f"Evaluation: {win_rate:.2f}% win rate over {self.eval_games} games")
+        loss_rate = (total_losses / self.eval_games) * 100
+        print(f"Evaluation: {win_rate:.2f}% win rate, {loss_rate:.2f}% loss rate over {self.eval_games} games")
         return win_rate
 
     def plot_training_results(self):
