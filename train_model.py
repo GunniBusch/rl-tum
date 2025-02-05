@@ -111,7 +111,8 @@ class CheckersTrainer:
                     win_data = self.evaluate()
                     win_rate = (win_data[1] / self.eval_games) * 100
                     self.win_rates.append(win_rate)
-                    print(f"Episode {episode + 1}: Win rate {win_rate:.2f}%")
+                    # Add all debug values
+                    print(f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {win_data[1]}, Losses: {win_data[-1]}, Draws: {win_data[0]}")
 
         self.save_model('checkpoints/model_final.pth')
         self.plot_training_results()
