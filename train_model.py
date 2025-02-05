@@ -59,7 +59,11 @@ class CheckersTrainer:
     def train(self):
         """ Main training loop for the agents """
         wins = {1: 0, -1: 0, 0: 0}
-        os.makedirs('checkpoints', exist_ok=True)
+        checkpoint_dir = 'checkpoints'
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+
+        best_model_path = os.path.join(checkpoint_dir, 'best_model.pth')
         console = Console()
         with Live(console=console, refresh_per_second=2):
             for episode in range(self.episodes):
@@ -67,8 +71,7 @@ class CheckersTrainer:
                 done = False
                 current_agent, opponent_agent = (self.agent1, self.agent2) if random.random() < 0.5 else (
                 self.agent2, self.agent1)
-                opponent_agent.epsilon = max(EPSILON_END,
-                                             EPSILON_START - (episode / self.episodes) * (EPSILON_START - EPSILON_END))
+                opponent_agent.epsilon = max(EPSILON_END, opponent_agent.epsilon * EPSILON_DECAY)
                 player = 1 if current_agent == self.agent1 else -1
                 total_reward = 0
                 total_loss = 0
@@ -83,9 +86,9 @@ class CheckersTrainer:
                     next_state, reward, additional_moves, done = self.env.step(action, player)
 
                     reward = max(-2, min(reward, 2))
-                    reward += 0.1 * (action[2] - action[0]) if player == 1 else 0.1 * (action[0] - action[2])
-                    reward += 2.0 if abs(action[2] - action[0]) == 2 else 0.0
-                    reward += 4.0 if (player == 1 and action[2] == self.env.board_size - 1) or (
+                    reward += 0.2 * (action[2] - action[0]) if player == 1 else 0.2 * (action[0] - action[2])
+                    reward += 5.0 if abs(action[2] - action[0]) == 2 else 0.0
+                    reward += 8.0 if (player == 1 and action[2] == self.env.board_size - 1) or (
                                 player == -1 and action[2] == 0) else 0.0
 
                     current_agent.remember(state, action, reward, next_state, done)
@@ -113,16 +116,23 @@ class CheckersTrainer:
                 self.rewards.append(total_reward)
                 self.losses.append(total_loss / max(1, move_count))
                 self.epsilons.append(current_agent.epsilon)
-                wins[self.env.game_winner(state)] += 1
+                winner = self.env.game_winner(state)
+                wins[winner] += 1
+
+                # Only the better agent moves on
+                if wins[1] > wins[-1]:
+                    self.agent2 = DQNAgent()
+                elif wins[-1] > wins[1]:
+                    self.agent1 = DQNAgent()
 
                 if (episode + 1) % self.eval_frequency == 0:
                     win_data = self.evaluate()
                     win_rate = (win_data[1] / self.eval_games) * 100
                     self.win_rates.append(win_rate)
                     print(
-                        f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {win_data[1]}, Losses: {win_data[-1]}, Draws: {win_data[0]}, Epsilon: {self.epsilons}, Alpha: {alpha}")
+                        f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {win_data[1]}, Losses: {win_data[-1]}, Draws: {win_data[0]}, Epsilon: {self.epsilons}")
 
-        self.save_model()
+        self.save_model(os.path.join(checkpoint_dir, f'model_final_e{self.episodes}.pth'))
         self.plot_training_results()
         return self.agent1, self.agent2, self.rewards, self.win_rates
 
