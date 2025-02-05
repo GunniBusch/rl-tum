@@ -14,26 +14,27 @@ import argparse
 import math
 
 # Training parameters
-EPISODES = 2000
+EPISODES = 3000
 EVAL_FREQUENCY = 50
 EVAL_EPISODES = 50
-BATCH_SIZE = 256
-TARGET_UPDATE = 20
-MEMORY_SIZE = 300000
-LEARNING_RATE = 0.00025
+BATCH_SIZE = 512
+TARGET_UPDATE = 5  # More frequent updates
+MEMORY_SIZE = 500000
+LEARNING_RATE = 0.0002
 EPSILON_START = 1.0
 EPSILON_END = 0.05
-EPSILON_DECAY = 0.995
+EPSILON_DECAY = 0.999  # Slower decay for better exploration
 GAMMA = 0.99  # Long-term reward optimization
-TAU = 0.01  # Soft update for target network
+TAU = 0.002  # More gradual target network updates
+GRADIENT_CLIP = 1.0  # Prevent large gradient updates
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train Checkers AI')
-    parser.add_argument('--episodes', type=int, default=2000, help='Number of episodes to train')
+    parser.add_argument('--episodes', type=int, default=3000, help='Number of episodes to train')
     parser.add_argument('--eval-frequency', type=int, default=50, help='Evaluation frequency')
-    parser.add_argument('--learning-rate', type=float, default=0.00025, help='Learning rate')
-    parser.add_argument('--batch-size', type=int, default=256, help='Batch size for replay')
+    parser.add_argument('--learning-rate', type=float, default=0.0002, help='Learning rate')
+    parser.add_argument('--batch-size', type=int, default=512, help='Batch size for replay')
     parser.add_argument('--eval-games', type=int, default=50, help='Number of evaluation games')
     return parser.parse_args()
 
@@ -71,9 +72,10 @@ class CheckersTrainer:
                     action = current_agent.act(state, valid_moves)
                     next_state, reward, additional_moves, done = self.env.step(action, player)
 
-                    reward += 0.4 * (action[2] - action[0]) if player == 1 else 0.4 * (action[0] - action[2])
-                    reward += 5.0 if abs(action[2] - action[0]) == 2 else 0.0
-                    reward += 7.0 if (player == 1 and action[2] == self.env.board_size - 1) or (player == -1 and action[2] == 0) else 0.0
+                    reward = max(-10, min(reward, 10))  # Clip rewards for stability
+                    reward += 0.5 * (action[2] - action[0]) if player == 1 else 0.5 * (action[0] - action[2])
+                    reward += 6.0 if abs(action[2] - action[0]) == 2 else 0.0
+                    reward += 8.0 if (player == 1 and action[2] == self.env.board_size - 1) or (player == -1 and action[2] == 0) else 0.0
 
                     current_agent.remember(state, action, reward, next_state, done)
                     if len(current_agent.memory) > BATCH_SIZE:
