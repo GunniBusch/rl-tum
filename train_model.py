@@ -55,6 +55,7 @@ class CheckersTrainer:
         self.win_rates = []
         self.losses = []
         self.epsilons = []
+        self.eval_results = []
 
     def soft_update(self, target, source, tau=0.005):
         for target_param, param in zip(target.parameters(), source.parameters()):
@@ -74,7 +75,7 @@ class CheckersTrainer:
                 state = self.env.reset()
                 done = False
                 current_agent, opponent_agent = (self.agent1, self.agent2) if random.random() < 0.5 else (
-                    self.agent2, self.agent1)
+                self.agent2, self.agent1)
                 opponent_agent.epsilon = max(EPSILON_END, opponent_agent.epsilon * EPSILON_DECAY)
                 player = 1 if current_agent == self.agent1 else -1
                 total_reward = 0
@@ -93,7 +94,7 @@ class CheckersTrainer:
                     reward += 0.2 * (action[2] - action[0]) if player == 1 else 0.2 * (action[0] - action[2])
                     reward += 5.0 if abs(action[2] - action[0]) == 2 else 0.0
                     reward += 8.0 if (player == 1 and action[2] == self.env.board_size - 1) or (
-                            player == -1 and action[2] == 0) else 0.0
+                                player == -1 and action[2] == 0) else 0.0
 
                     current_agent.remember(state, action, reward, next_state, done)
 
@@ -114,11 +115,8 @@ class CheckersTrainer:
                         player *= -1
 
                 if episode % TARGET_UPDATE == 0:
-                    # Only the better agent moves on
-                    if wins[1] > wins[-1]:
-                        self.agent2.update_target_network()
-                    elif wins[-1] > wins[1]:
-                        self.agent1.update_target_network()
+                    self.agent1.update_target_network()
+                    self.agent2.update_target_network()
 
                 self.rewards.append(total_reward)
                 self.losses.append(total_loss / max(1, move_count))
@@ -126,16 +124,39 @@ class CheckersTrainer:
                 winner = self.env.game_winner(state)
                 wins[winner] += 1
 
-
-
                 win_rate = (wins[1] / max(1, sum(wins.values()))) * 100
                 self.win_rates.append(win_rate)
                 print(
                     f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {wins[1]}, Losses: {wins[-1]}, Draws: {wins[0]}, Epsilon: {self.epsilons[-1]}")
 
+                if (episode + 1) % self.eval_frequency == 0:
+                    eval_score = self.evaluate()
+                    self.eval_results.append(eval_score)
+
         self.save_model(os.path.join(checkpoint_dir, f'model_final_e{self.episodes}.pth'))
         self.plot_training_results()
-        return self.agent1, self.agent2, self.rewards, self.win_rates
+        return self.agent1, self.agent2, self.rewards, self.win_rates, self.eval_results
+
+    def evaluate(self):
+        """ Evaluates the current agent's performance """
+        total_wins = 0
+        for _ in range(self.eval_games):
+            state = self.env.reset()
+            done = False
+            player = 1
+            while not done:
+                agent = self.agent1 if player == 1 else self.agent2
+                valid_moves = self.env.valid_moves(player)
+                if not valid_moves:
+                    break
+                action = agent.act(state, valid_moves)
+                state, _, _, done = self.env.step(action, player)
+                player *= -1
+            if self.env.game_winner(state) == 1:
+                total_wins += 1
+        win_rate = (total_wins / self.eval_games) * 100
+        print(f"Evaluation: {win_rate:.2f}% win rate over {self.eval_games} games")
+        return win_rate
 
     def plot_training_results(self):
         """ Plot and save training results """
