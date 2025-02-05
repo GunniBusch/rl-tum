@@ -19,7 +19,7 @@ EPISODES = 300  # Increased episodes for deeper learning
 EVAL_FREQUENCY = 20
 EVAL_EPISODES = 200  # More evaluation games for better accuracy
 BATCH_SIZE = 2048  # Larger batch size for more stable updates
-TARGET_UPDATE = 30  # Less frequent updates to avoid instability
+TARGET_UPDATE = 100  # Less frequent updates to avoid instability
 MEMORY_SIZE = 2000000  # Larger memory for better replay diversity
 LEARNING_RATE = 0.000025  # Further reduced learning rate for smoother training
 EPSILON_START = 1.0
@@ -56,6 +56,10 @@ class CheckersTrainer:
         self.losses = []
         self.epsilons = []
 
+    def soft_update(self, target, source, tau=0.005):
+        for target_param, param in zip(target.parameters(), source.parameters()):
+            target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
     def train(self):
         """ Main training loop for the agents """
         wins = {1: 0, -1: 0, 0: 0}
@@ -65,21 +69,17 @@ class CheckersTrainer:
 
         best_model_path = os.path.join(checkpoint_dir, 'best_model.pth')
         console = Console()
-
         with Live(console=console, refresh_per_second=2):
             for episode in range(self.episodes):
                 state = self.env.reset()
                 done = False
                 current_agent, opponent_agent = (self.agent1, self.agent2) if random.random() < 0.5 else (
-                self.agent2, self.agent1)
+                    self.agent2, self.agent1)
+                opponent_agent.epsilon = max(EPSILON_END, opponent_agent.epsilon * EPSILON_DECAY)
                 player = 1 if current_agent == self.agent1 else -1
                 total_reward = 0
                 total_loss = 0
                 move_count = 0
-
-                # Ensure epsilon decays properly
-                current_agent.epsilon = max(EPSILON_END, current_agent.epsilon * EPSILON_DECAY)
-                opponent_agent.epsilon = max(EPSILON_END, opponent_agent.epsilon * EPSILON_DECAY)
 
                 while not done:
                     valid_moves = self.env.valid_moves(player)
@@ -93,7 +93,7 @@ class CheckersTrainer:
                     reward += 0.2 * (action[2] - action[0]) if player == 1 else 0.2 * (action[0] - action[2])
                     reward += 5.0 if abs(action[2] - action[0]) == 2 else 0.0
                     reward += 8.0 if (player == 1 and action[2] == self.env.board_size - 1) or (
-                                player == -1 and action[2] == 0) else 0.0
+                            player == -1 and action[2] == 0) else 0.0
 
                     current_agent.remember(state, action, reward, next_state, done)
 
@@ -101,6 +101,9 @@ class CheckersTrainer:
                         loss = current_agent.replay()
                         if loss is not None:
                             total_loss += loss
+                        if current_agent.epsilon > current_agent.epsilon_min:
+                            current_agent.epsilon = max(current_agent.epsilon_min,
+                                                        current_agent.epsilon * current_agent.epsilon_decay)
 
                     state = next_state
                     total_reward += reward
@@ -110,27 +113,21 @@ class CheckersTrainer:
                         current_agent, opponent_agent = opponent_agent, current_agent
                         player *= -1
 
-                def soft_update(target, source, tau=0.005):  # Smooth updates
-                    for target_param, param in zip(target.parameters(), source.parameters()):
-                        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
-
-                soft_update(self.agent1.target_network, self.agent1.q_network)
-                soft_update(self.agent2.target_network, self.agent2.q_network)
+                if episode % TARGET_UPDATE == 0:
+                    self.agent1.update_target_network()
+                    self.agent2.update_target_network()
 
                 self.rewards.append(total_reward)
                 self.losses.append(total_loss / max(1, move_count))
                 self.epsilons.append(current_agent.epsilon)
-
                 winner = self.env.game_winner(state)
                 wins[winner] += 1
 
-                # Select the better agent to continue learning
+                # Only the better agent moves on
                 if wins[1] > wins[-1]:
-                    self.agent2.q_network.load_state_dict(self.agent1.q_network.state_dict())
-                    self.agent2.target_network.load_state_dict(self.agent1.q_network.state_dict())
+                    self.agent2 = DQNAgent()
                 elif wins[-1] > wins[1]:
-                    self.agent1.q_network.load_state_dict(self.agent2.q_network.state_dict())
-                    self.agent1.target_network.load_state_dict(self.agent2.q_network.state_dict())
+                    self.agent1 = DQNAgent()
 
                 win_rate = (wins[1] / max(1, sum(wins.values()))) * 100
                 self.win_rates.append(win_rate)
