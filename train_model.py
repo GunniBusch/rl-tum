@@ -23,7 +23,7 @@ TARGET_UPDATE = 100  # Less frequent updates to avoid instability
 MEMORY_SIZE = 2000000  # Larger memory for better replay diversity
 LEARNING_RATE = 0.000025  # Further reduced learning rate for smoother training
 EPSILON_START = 1.0
-EPSILON_END = 0.1  # Maintain more exploration for longer
+EPSILON_END = 0.0001  # Maintain more exploration for longer
 EPSILON_DECAY = 0.99995  # Even slower decay for sustained exploration
 GAMMA = 0.999  # Higher discount factor for better long-term planning
 TAU = 0.001  # More gradual target network updates
@@ -57,6 +57,7 @@ class CheckersTrainer:
         self.epsilons = []
 
     def train(self):
+        """ Main training loop for the agents """
         wins = {1: 0, -1: 0, 0: 0}
         os.makedirs('checkpoints', exist_ok=True)
         console = Console()
@@ -64,8 +65,10 @@ class CheckersTrainer:
             for episode in range(self.episodes):
                 state = self.env.reset()
                 done = False
-                current_agent, opponent_agent = (self.agent1, self.agent2) if random.random() < 0.5 else (self.agent2, self.agent1)
-                opponent_agent.epsilon = max(EPSILON_END, EPSILON_START - (episode / self.episodes) * (EPSILON_START - EPSILON_END))
+                current_agent, opponent_agent = (self.agent1, self.agent2) if random.random() < 0.5 else (
+                self.agent2, self.agent1)
+                opponent_agent.epsilon = max(EPSILON_END,
+                                             EPSILON_START - (episode / self.episodes) * (EPSILON_START - EPSILON_END))
                 player = 1 if current_agent == self.agent1 else -1
                 total_reward = 0
                 total_loss = 0
@@ -82,19 +85,23 @@ class CheckersTrainer:
                     reward = max(-2, min(reward, 2))
                     reward += 0.1 * (action[2] - action[0]) if player == 1 else 0.1 * (action[0] - action[2])
                     reward += 2.0 if abs(action[2] - action[0]) == 2 else 0.0
-                    reward += 4.0 if (player == 1 and action[2] == self.env.board_size - 1) or (player == -1 and action[2] == 0) else 0.0
+                    reward += 4.0 if (player == 1 and action[2] == self.env.board_size - 1) or (
+                                player == -1 and action[2] == 0) else 0.0
 
                     current_agent.remember(state, action, reward, next_state, done)
+
                     if len(current_agent.memory) > current_agent.batch_size:
                         loss = current_agent.replay()
                         if loss is not None:
                             total_loss += loss
                         if current_agent.epsilon > current_agent.epsilon_min:
-                            current_agent.epsilon = max(current_agent.epsilon_min, current_agent.epsilon * current_agent.epsilon_decay)
+                            current_agent.epsilon = max(current_agent.epsilon_min,
+                                                        current_agent.epsilon * current_agent.epsilon_decay)
 
                     state = next_state
                     total_reward += reward
                     move_count += 1
+
                     if not additional_moves:
                         current_agent, opponent_agent = opponent_agent, current_agent
                         player *= -1
@@ -112,10 +119,10 @@ class CheckersTrainer:
                     win_data = self.evaluate()
                     win_rate = (win_data[1] / self.eval_games) * 100
                     self.win_rates.append(win_rate)
-                    # Add all debug values
-                    print(f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {win_data[1]}, Losses: {win_data[-1]}, Draws: {win_data[0]}, Epsilon: {self.epsilons:.2f}, Alpha: {alpha:.2f}")
+                    print(
+                        f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {win_data[1]}, Losses: {win_data[-1]}, Draws: {win_data[0]}, Epsilon: {self.epsilons}, Alpha: {alpha}")
 
-        self.save_model('checkpoints/model_final.pth')
+        self.save_model()
         self.plot_training_results()
         return self.agent1, self.agent2, self.rewards, self.win_rates
 
