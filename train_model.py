@@ -125,46 +125,27 @@ class CheckersTrainer:
                 elif wins[-1] > wins[1]:
                     self.agent1 = DQNAgent()
 
-                if (episode + 1) % self.eval_frequency == 0:
-                    win_data = self.evaluate()
-                    win_rate = (win_data[1] / self.eval_games) * 100
-                    self.win_rates.append(win_rate)
-                    print(
-                        f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {win_data[1]}, Losses: {win_data[-1]}, Draws: {win_data[0]}, Epsilon: {self.epsilons}")
+                win_rate = (wins[1] / max(1, sum(wins.values()))) * 100
+                self.win_rates.append(win_rate)
+                print(
+                    f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {wins[1]}, Losses: {wins[-1]}, Draws: {wins[0]}, Epsilon: {self.epsilons[-1]}")
 
         self.save_model(os.path.join(checkpoint_dir, f'model_final_e{self.episodes}.pth'))
         self.plot_training_results()
         return self.agent1, self.agent2, self.rewards, self.win_rates
 
-    def evaluate(self):
-        wins = {1: 0, -1: 0, 0: 0}
-        for _ in range(self.eval_games):
-            state = self.env.reset()
-            done, player = False, 1
-            while not done:
-                agent = self.agent1 if player == 1 else self.agent2
-                valid_moves = self.env.valid_moves(player)
-                if not valid_moves:
-                    wins[0] += 1
-                    break
-                action = agent.act(state, valid_moves)
-                state, _, additional_moves, done = self.env.step(action, player)
-                if not additional_moves:
-                    player *= -1
-            wins[self.env.game_winner(state)] += 1
-        return wins
-
     def plot_training_results(self):
+        """ Plot and save training results """
         plt.figure(figsize=(12, 6))
         plt.subplot(1, 2, 1)
-        plt.plot(self.win_rates, label='Win Rate')
-        plt.xlabel('Evaluation Step')
+        plt.plot(range(len(self.win_rates)), self.win_rates, label='Win Rate', color='blue')
+        plt.xlabel('Episodes')
         plt.ylabel('Win Rate (%)')
         plt.title('Win Rate Progression')
         plt.legend()
 
         plt.subplot(1, 2, 2)
-        plt.plot(self.rewards, label='Rewards per Episode', color='green')
+        plt.plot(range(len(self.rewards)), self.rewards, label='Rewards per Episode', color='green', alpha=0.7)
         plt.xlabel('Episodes')
         plt.ylabel('Rewards')
         plt.title('Training Rewards')
@@ -174,11 +155,41 @@ class CheckersTrainer:
         plt.savefig('checkpoints/training_results.png')
         plt.show()
 
-    def save_model(self, path):
-        best_agent = self.agent1 if self.win_rates[-1] > self.win_rates[-2] else self.agent2
-        torch.save(best_agent.q_network.state_dict(), path)
-        print(f"Model saved to {path} with win rate: {self.win_rates[-1]:.2f}%")
+    def save_model(self, path="checkpoints/best_model.pth"):
+        torch.save({
+            "model_state_dict": self.agent1.q_network.state_dict(),
+            "optimizer_state_dict": self.agent1.optimizer.state_dict(),
+            "epsilon": self.agent1.epsilon,
+            "win_rate": self.win_rates[-1] if self.win_rates else 0
+        }, path)
+        print(f"Model saved at {path}")
 
+def load_trained_model(model_path):
+    """Load a trained model with correct state_dict keys."""
+    agent = DQNAgent()  # Ensure we create an agent with the correct architecture
+
+    if os.path.exists(model_path):
+        try:
+            checkpoint = torch.load(model_path, map_location=agent.device)
+
+            if "model_state_dict" in checkpoint:
+                agent.q_network.load_state_dict(checkpoint["model_state_dict"], strict=False)
+                agent.target_network.load_state_dict(checkpoint["model_state_dict"], strict=False)
+            else:
+                print("Error: Model state_dict not found in checkpoint.")
+
+            if "optimizer_state_dict" in checkpoint:
+                agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+            agent.epsilon = checkpoint.get("epsilon", agent.epsilon)
+            print(f"Loaded model from {model_path} successfully!")
+            print(f"Win rate at save: {checkpoint.get('win_rate', 'Unknown'):.2f}%")
+        except Exception as e:
+            print(f"Error loading {model_path}: {e}")
+    else:
+        print(f"No trained model found. Using untrained agent.")
+
+    return agent
 
 def train_agent():
     env = checkers_env()
