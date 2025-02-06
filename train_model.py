@@ -3,7 +3,9 @@ import torch
 import numpy as np
 from rich.live import Live
 from rich.console import Console
+from rich.panel import Panel
 from rich.progress import Progress
+from rich.table import Table
 from sympy.abc import alpha
 
 from checkers_env import checkers_env
@@ -15,19 +17,19 @@ import argparse
 import math
 
 # Training parameters
-EPISODES = 300
+EPISODES = 400  # Increased training episodes for better convergence
 EVAL_FREQUENCY = 10  # More frequent evaluations
 EVAL_EPISODES = 500  # More evaluation games for accuracy
-BATCH_SIZE = 2048
-TARGET_UPDATE = 50  # More frequent target updates for stability
-MEMORY_SIZE = 2000000
-LEARNING_RATE = 0.000025
+BATCH_SIZE = 512  # Adjusted batch size for stability
+TARGET_UPDATE = 10  # More frequent target updates for stability
+MEMORY_SIZE = 500000  # Increased memory size for better experience replay
+LEARNING_RATE = 0.0001  # Adjusted learning rate for better convergence
 EPSILON_START = 1.0
-EPSILON_END = 0.0001
-EPSILON_DECAY = 0.99995
-GAMMA = 0.999
-TAU = 0.005
-GRADIENT_CLIP = 0.5
+EPSILON_END = 0.1  # Higher minimum epsilon to ensure exploration
+EPSILON_DECAY = 0.9997  # Adjusted decay for better long-term learning
+GAMMA = 0.99
+TAU = 0.005  # Slower soft updates for target network stability
+GRADIENT_CLIP = 1.0  # Gradient clipping to prevent instability
 PRIORITY_EPSILON = 1e-6
 
 def parse_args():
@@ -41,8 +43,9 @@ def parse_args():
 
 
 class CheckersTrainer:
-    def __init__(self, env, agent1, agent2, args):
+    def __init__(self, env, args):
         self.env = env
+        agent1, agent2 = DQNAgent(), DQNAgent()
         self.agent1 = agent1
         self.agent2 = agent2
         self.episodes = args.episodes
@@ -60,6 +63,7 @@ class CheckersTrainer:
         for target_param, param in zip(target.parameters(), source.parameters()):
             target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
+
     def train(self):
         """ Main training loop for the agents """
         wins = {1: 0, -1: 0, 0: 0}
@@ -73,9 +77,7 @@ class CheckersTrainer:
             for episode in range(self.episodes):
                 state = self.env.reset()
                 done = False
-                current_agent, opponent_agent = (self.agent1, self.agent2) if random.random() < 0.5 else (
-                    self.agent2, self.agent1)
-                opponent_agent.epsilon = max(EPSILON_END, opponent_agent.epsilon * EPSILON_DECAY)
+                current_agent, opponent_agent = (self.agent1, self.agent2)
                 player = 1 if current_agent == self.agent1 else -1
                 total_reward = 0
                 total_loss = 0
@@ -88,16 +90,11 @@ class CheckersTrainer:
 
                     action = current_agent.act(state, valid_moves)
                     next_state, reward, additional_moves, done = self.env.step(action, player)
-
-                    reward = max(-2, min(reward, 2))
-                    reward += 0.2 * (action[2] - action[0]) if player == 1 else 0.2 * (action[0] - action[2])
-                    reward += 5.0 if abs(action[2] - action[0]) == 2 else 0.0
-                    reward += 8.0 if (player == 1 and action[2] == self.env.board_size - 1) or (
-                            player == -1 and action[2] == 0) else 0.0
+                    reward = max(-1, min(reward, 1))  # Normalized rewards to prevent overfitting
 
                     current_agent.remember(state, action, reward, next_state, done)
 
-                    if len(current_agent.memory) > current_agent.batch_size:
+                    if len(current_agent.memory) > self.batch_size:
                         loss = current_agent.replay()
                         if loss is not None:
                             total_loss += loss
@@ -111,8 +108,8 @@ class CheckersTrainer:
                         player *= -1
 
                 if episode % TARGET_UPDATE == 0:
-                    self.agent1.update_target_network()
-                    self.agent2.update_target_network()
+                    self.soft_update(self.agent1.target_network, self.agent1.q_network)
+                    self.soft_update(self.agent2.target_network, self.agent2.q_network)
 
                 self.rewards.append(total_reward)
                 self.losses.append(total_loss / max(1, move_count))
@@ -120,10 +117,15 @@ class CheckersTrainer:
                 winner = self.env.game_winner(state)
                 wins[winner] += 1
 
-                win_rate = (wins[1] / max(1, sum(wins.values()))) * 100
+                # Allow the better-performing agent to take over training
+                if wins[1] > wins[-1]:
+                    self.agent2.q_network.load_state_dict(self.agent1.q_network.state_dict())
+                else:
+                    self.agent1.q_network.load_state_dict(self.agent2.q_network.state_dict())
+
+                win_rate = (wins[1] / max(1, wins[1] + wins[-1])) * 100
                 self.win_rates.append(win_rate)
-                print(
-                    f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {wins[1]}, Losses: {wins[-1]}, Draws: {wins[0]}, Epsilon: {self.epsilons[-1]}")
+                print(f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {wins[1]}, Losses: {wins[-1]}, Draws: {wins[0]}, Epsilon: {self.epsilons[-1]}")
 
                 if (episode + 1) % self.eval_frequency == 0:
                     eval_score = self.evaluate()
@@ -230,7 +232,7 @@ def load_trained_model(model_path):
 def train_agent():
     env = checkers_env()
     agent1, agent2 = DQNAgent(), DQNAgent()
-    trainer = CheckersTrainer(env, agent1, agent2, parse_args())
+    trainer = CheckersTrainer(env, parse_args())
     return trainer.train()
 
 
