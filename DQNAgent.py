@@ -21,15 +21,28 @@ mp.set_start_method('spawn', force=True)  # Add this at the top of the file
 class ParallelDQN(nn.Module):
     def __init__(self, state_size, action_size=36, hidden_size=128, dropout_rate=0.1):
         super(ParallelDQN, self).__init__()
-
         self.fc1 = nn.Linear(state_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, action_size)
+        # Shared hidden layer before splitting into two streams
+        self.fc_value = nn.Linear(hidden_size, hidden_size)
+        self.fc_advantage = nn.Linear(hidden_size, hidden_size)
+        self.value = nn.Linear(hidden_size, 1)
+        self.advantage = nn.Linear(hidden_size, action_size)
+        self.dropout_rate = dropout_rate
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)  # No activation on output
+        x = F.dropout(x, p=self.dropout_rate, training=self.training)
+        # Value stream
+        val = F.relu(self.fc_value(x))
+        val = F.dropout(val, p=self.dropout_rate, training=self.training)
+        val = self.value(val)
+        # Advantage stream
+        adv = F.relu(self.fc_advantage(x))
+        adv = F.dropout(adv, p=self.dropout_rate, training=self.training)
+        adv = self.advantage(adv)
+        # Combine streams: Q(s, a) = V(s) + (A(s, a) - mean(A(s, a)))
+        q_vals = val + (adv - adv.mean(dim=1, keepdim=True))
+        return q_vals
 
 
 class ParallelDQN2(nn.Module):
