@@ -18,15 +18,15 @@ import math
 
 # Training parameters
 EPISODES = 400  # Increased training episodes for better convergence
-EVAL_FREQUENCY = 10  # More frequent evaluations
+EVAL_FREQUENCY = 20  # More frequent evaluations
 EVAL_EPISODES = 500  # More evaluation games for accuracy
-BATCH_SIZE = 512  # Adjusted batch size for stability
-TARGET_UPDATE = 10  # More frequent target updates for stability
+BATCH_SIZE = 128  # Adjusted batch size for stability
+TARGET_UPDATE = 40  # More frequent target updates for stability
 MEMORY_SIZE = 500000  # Increased memory size for better experience replay
-LEARNING_RATE = 0.0001  # Adjusted learning rate for better convergence
+LEARNING_RATE = 0.001  # Adjusted learning rate for better convergence
 EPSILON_START = 1.0
 EPSILON_END = 0.1  # Higher minimum epsilon to ensure exploration
-EPSILON_DECAY = 0.9997  # Adjusted decay for better long-term learning
+EPSILON_DECAY = 0.9998  # Adjusted decay for better long-term learning
 GAMMA = 0.99
 TAU = 0.005  # Slower soft updates for target network stability
 GRADIENT_CLIP = 1.0  # Gradient clipping to prevent instability
@@ -53,15 +53,16 @@ class CheckersTrainer:
         self.eval_games = args.eval_games
         self.batch_size = args.batch_size
         self.learning_rate = args.learning_rate
+        self.epsilon = EPSILON_START
+        self.epsilon_decay = EPSILON_DECAY
+        self.gamma = GAMMA
+        self.epsilon_min = EPSILON_END
         self.rewards = []
         self.win_rates = []
         self.losses = []
         self.epsilons = []
         self.eval_results = []
 
-    def soft_update(self, target, source, tau=0.005):
-        for target_param, param in zip(target.parameters(), source.parameters()):
-            target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
 
     def train(self):
@@ -77,89 +78,117 @@ class CheckersTrainer:
             for episode in range(self.episodes):
                 state = self.env.reset()
                 done = False
-                current_agent, opponent_agent = (self.agent1, self.agent2)
-                player = 1 if current_agent == self.agent1 else -1
+                self.epsilons.append(self.agent1.epsilon)
+
+                player = random.choice([1, -1])
                 total_reward = 0
                 total_loss = 0
                 move_count = 0
-
                 while not done:
                     valid_moves = self.env.valid_moves(player)
                     if not valid_moves:
                         break
 
-                    action = current_agent.act(state, valid_moves)
+                    if player == 1:
+                        action = self.agent1.act(state, valid_moves)
+                    else:
+                        action = random.choice(valid_moves)
+
                     next_state, reward, additional_moves, done = self.env.step(action, player)
-                    reward = max(-1, min(reward, 1))  # Normalized rewards to prevent overfitting
 
-                    current_agent.remember(state, action, reward, next_state, done)
+                    # reward = max(-1, min(reward, 1))  # Normalized rewards to prevent overfitting
 
-                    if len(current_agent.memory) > self.batch_size:
-                        loss = current_agent.replay()
-                        if loss is not None:
-                            total_loss += loss
+                    if player == 1:
+                        self.agent1.remember(state, action, reward, next_state, done)
+
+                        if len(self.agent1.memory) > self.batch_size:
+                            loss = self.agent1.replay()
+                            if loss is not None:
+                                total_loss += loss
 
                     state = next_state
                     total_reward += reward
                     move_count += 1
 
                     if not additional_moves:
-                        current_agent, opponent_agent = opponent_agent, current_agent
                         player *= -1
 
                 if episode % TARGET_UPDATE == 0:
-                    self.soft_update(self.agent1.target_network, self.agent1.q_network)
-                    self.soft_update(self.agent2.target_network, self.agent2.q_network)
+                    self.agent1.update_target_network()
+                if episode % 100 == 0:
+                    print(f"Episode {episode}: Avg Loss: {total_loss / max(1, move_count):.5f}")
 
                 self.rewards.append(total_reward)
                 self.losses.append(total_loss / max(1, move_count))
-                self.epsilons.append(current_agent.epsilon)
+
                 winner = self.env.game_winner(state)
                 wins[winner] += 1
 
-                # Allow the better-performing agent to take over training
-                if wins[1] > wins[-1]:
-                    self.agent2.q_network.load_state_dict(self.agent1.q_network.state_dict())
-                else:
-                    self.agent1.q_network.load_state_dict(self.agent2.q_network.state_dict())
+
 
                 win_rate = (wins[1] / max(1, wins[1] + wins[-1])) * 100
                 self.win_rates.append(win_rate)
                 print(f"Episode {episode + 1}: Win rate {win_rate:.2f}%, Total Wins: {wins[1]}, Losses: {wins[-1]}, Draws: {wins[0]}, Epsilon: {self.epsilons[-1]}")
 
                 if (episode + 1) % self.eval_frequency == 0:
-                    eval_score = self.evaluate()
+                    eval_score = self.evaluate(opponent="random")
                     self.eval_results.append(eval_score)
 
         self.save_model(os.path.join(checkpoint_dir, f'model_final_e{self.episodes}.pth'))
         self.plot_training_results()
         return self.agent1, self.agent2, self.rewards, self.win_rates, self.eval_results
 
-    def evaluate(self):
-        """ Evaluates the current agent's performance """
-        total_wins = 0
-        total_losses = 0
-        for _ in range(self.eval_games):
+    def evaluate(self, opponent="random"):
+        """
+        Evaluates the DQN agent by playing against different types of opponents.
+
+        Args:
+            opponent (str): Type of opponent ("random", "minimax", "dqn").
+            episodes (int): Number of evaluation episodes.
+
+        Returns:
+            float: Win rate of the agent.
+        """
+        wins = {1: 0, -1: 0, 0: 0}  # Tracking wins, losses, draws
+
+        for episode in range(self.eval_games):
             state = self.env.reset()
             done = False
-            player = 1
+            player = 1  # The trained agent always starts
+
             while not done:
-                agent = self.agent1 if player == 1 else self.agent2
                 valid_moves = self.env.valid_moves(player)
                 if not valid_moves:
-                    break
-                action = agent.act(state, valid_moves)
-                state, _, _, done = self.env.step(action, player)
-                player *= -1
+                    break  # No valid moves → switch player
+
+                if player == 1:
+                    action = self.agent1.act(state, valid_moves)  # DQN agent move
+                else:
+                    if opponent == "random":
+                        action = random.choice(valid_moves)  # Random moves
+                    elif opponent == "minimax":
+                        action = self.env.minimax_move(state, player)  # Use minimax strategy
+                    elif opponent == "dqn":
+                        action = self.agent2.act(state, valid_moves)  # Another trained agent
+                    else:
+                        raise ValueError("Invalid opponent type: choose 'random', 'minimax', or 'dqn'.")
+
+                next_state, reward, additional_moves, done = self.env.step(action, player)
+                state = next_state
+
+                if not additional_moves:
+                    player *= -1  # Switch turns
+
             winner = self.env.game_winner(state)
-            if winner == 1:
-                total_wins += 1
-            elif winner == -1:
-                total_losses += 1
-        win_rate = (total_wins / self.eval_games) * 100
-        loss_rate = (total_losses / self.eval_games) * 100
-        print(f"Evaluation: {win_rate:.2f}% win rate, {loss_rate:.2f}% loss rate over {self.eval_games} games")
-        return win_rate
+            wins[winner] += 1
+
+        win_rate = (wins[1] / max(1, wins[1] + wins[-1])) * 100
+        print(
+            f"Evaluation against {opponent}: Win rate: {win_rate:.2f}% ({wins[1]} wins, {wins[-1]} losses, {wins[0]} draws)")
+
+        return win_rate  # Returns win percentage
+
+
 
     def plot_training_results(self):
         """ Plot and save training results """

@@ -6,3 +6,4 @@ matplotlib
 pygame
 plotext
 rich
+torchrl
